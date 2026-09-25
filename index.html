@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f8a5c9">
+<title>Mood Glyph</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=Archivo+Black&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ui: #fff200; --bg: #f8a5c9; --uifont: "Silkscreen", "JetBrains Mono", monospace;
+    --pad: clamp(12px, 2.5vw, 28px);
+    --top: calc(var(--pad) + env(safe-area-inset-top, 0px));
+    --bottom: calc(var(--pad) + env(safe-area-inset-bottom, 0px));
+    --left: calc(var(--pad) + env(safe-area-inset-left, 0px));
+    --right: calc(var(--pad) + env(safe-area-inset-right, 0px));
+  }
+  body.type { --ui: #000; --bg: #93b8fb; --uifont: "Space Grotesk", system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ui); font-family: var(--uifont);
+               overscroll-behavior: none; touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+               -webkit-user-select: none; user-select: none; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  /* kept "visible" but invisible: iOS Safari stops decoding frames for display:none video */
+  video { position: fixed; top: 0; left: 0; width: 2px; height: 2px; opacity: 0; pointer-events: none; }
+
+  .hud { position: fixed; inset: 0; pointer-events: none; }
+  .hud > * { pointer-events: auto; position: absolute; }
+  .title { top: var(--top); left: var(--left); margin: 0; font-weight: 700;
+           font-size: clamp(22px, 4.6vw, 64px); line-height: 1; letter-spacing: 0.02em; }
+  .controls { top: var(--top); right: var(--right); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .swatches { display: flex; border: 2px solid var(--ui); }
+  body.type .swatches { display: none; }
+  .swatches button { width: 22px; height: 22px; border: 0; padding: 0; cursor: pointer; }
+  .swatches button[aria-pressed="true"] { outline: 3px solid var(--ui); outline-offset: -5px; }
+  .btn { font: inherit; font-size: 14px; background: transparent; color: var(--ui); border: 2px solid var(--ui);
+         padding: 4px 10px; cursor: pointer; }
+  .btn[aria-pressed="true"] { background: var(--ui); color: var(--bg); }
+  button:focus-visible { outline: 3px solid var(--ui); outline-offset: 3px; }
+  .status { bottom: var(--bottom); left: var(--left); display: flex; align-items: center; gap: 12px;
+            font-size: clamp(18px, 3.4vw, 44px); font-weight: 700; }
+  .dot { width: 0.8em; height: 0.8em; border-radius: 50%; background: #ff3b3b; transition: background .2s; flex: none; }
+  .dot.on { background: #00d084; }
+  .mood { bottom: var(--bottom); right: var(--right); font-size: clamp(24px, 5vw, 72px); font-weight: 700; line-height: 1; text-align: right; }
+  .hint { bottom: calc(var(--bottom) + clamp(40px, 6vw, 80px)); left: var(--left); font-size: 12px; opacity: .8; }
+
+  /* touch devices: bigger targets, no keyboard hint */
+  @media (pointer: coarse) {
+    .hint { display: none; }
+    .swatches button { width: 36px; height: 36px; }
+    .btn { font-size: 15px; min-height: 40px; padding: 6px 12px; }
+  }
+  /* narrow screens: controls drop below the title, status shrinks to just the dot */
+  @media (max-width: 640px) {
+    .title { font-size: 24px; }
+    .controls { top: calc(var(--top) + 36px); left: var(--left); right: auto; justify-content: flex-start; }
+    #statusText { display: none; }
+    .status { font-size: 22px; }
+    .mood { font-size: clamp(24px, 8vw, 40px); max-width: calc(100% - 80px); }
+  }
+
+  .start { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 10;
+           padding: calc(24px + env(safe-area-inset-top, 0px)) 24px calc(24px + env(safe-area-inset-bottom, 0px)); text-align: center; }
+  .start h2 { font-size: clamp(56px, 12vw, 120px); margin: 0 0 12px; line-height: .95; }
+  .start p { max-width: 36ch; margin: 0 auto 24px; font-family: "Space Grotesk", sans-serif; font-size: 18px; line-height: 1.4; }
+  .start button { font: inherit; font-size: 22px; background: var(--ui); color: var(--bg); border: 0; padding: 16px 28px; cursor: pointer; min-height: 56px; }
+  .start .err { color: #b00020; background: #fff; padding: 10px 14px; margin-top: 18px; font-family: "Space Grotesk", sans-serif; font-size: 15px; display: none; max-width: 40ch; }
+  @media (prefers-reduced-motion: reduce) { .dot { transition: none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<video id="v" playsinline muted autoplay></video>
+
+<div class="hud">
+  <h1 class="title" id="title">Glyph mirror</h1>
+  <div class="controls">
+    <div class="swatches" id="swatches" aria-label="Palette"></div>
+    <button class="btn" id="modeBtn" title="Switch mode (M)">Type face</button>
+    <button class="btn" id="snapBtn" title="Save image (S)">Save</button>
+    <button class="btn" id="debugBtn" title="Show face values (D)" aria-pressed="false">Values</button>
+  </div>
+  <div class="hint" id="hint">M mode · 1–4 palette · S save · D values</div>
+  <div class="status"><span class="dot" id="dot" aria-hidden="true"></span><span id="statusText">No face</span></div>
+  <div class="mood" id="mood" aria-live="polite">…</div>
+</div>
+
+<div class="start" id="start">
+  <div>
+    <h2>(•_•)</h2>
+    <p>Your face drives the page. Make faces at the camera and watch them get translated into glyphs.</p>
+    <button id="go">Turn on camera</button>
+    <div class="err" id="err"></div>
+  </div>
+</div>
+
+<script type="module">
+import { FaceLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+/* ---------- config: tweak these ---------- */
+const WASM  = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+const MODEL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+const SWAP_LR = false;      // flip if left/right brows or eyes react on the wrong side
+const CONTRAST = 1.6;       // ASCII contrast
+const RAMP = "@#%&=+*:-_ "; // dark -> light
+const T = {                 // expression thresholds (press D to see live values)
+  wink: 0.35, blink: 0.6, jaw: 0.35, shockBrow: 0.35, smile: 0.4,
+  pucker: 0.55, browDown: 0.35, frown: 0.2, sadBrow: 0.45,
+};
+
+const PALETTES = [
+  { bg: "#f8a5c9", ink: ["#f2561d", "#e8384f", "#4d5e53", "#3ab4f2"], accent: "#fff200" },
+  { bg: "#ff8c1a", ink: ["#3b1a8f", "#7a1fff", "#ffd1e6", "#fff4d6"], accent: "#1a0fff" },
+  { bg: "#4b17ff", ink: ["#1b0b66", "#ff5ac8", "#9fd8ff", "#b6ff3b"], accent: "#b6ff3b" },
+  { bg: "#000000", ink: ["#1f8f4e", "#39ff88", "#3a3a3a", "#e6ffe9"], accent: "#ff4fa3" },
+];
+
+const EXPR = {
+  neutral:   { face: "(•_•)",   word: "Neutral" },
+  happy:     { face: "(^▽^)",   word: "Happy" },
+  surprised: { face: "(°o°)",   word: "Surprised" },
+  shocked:   { face: "(°Д°)",   word: "Shocked" },
+  angry:     { face: "(`皿´)",  word: "Angry" },
+  sad:       { face: "(;_;)",   word: "Sad" },
+  sleepy:    { face: "(-_-)zZ", word: "Sleepy" },
+  cheeky:    { face: "(^_~)",   word: "Cheeky" },
+  kissy:     { face: "(˘³˘)",   word: "Kissy" },
+  none:      { face: "(?_?)",   word: "Where'd you go" },
+};
+
+/* ---------- state ---------- */
+const canvas = document.getElementById("c"), ctx = canvas.getContext("2d");
+const video = document.getElementById("v");
+const small = document.createElement("canvas"), sctx = small.getContext("2d", { willReadFrequently: true });
+const $ = id => document.getElementById(id);
+
+let W = 0, H = 0, dpr = 1, fs = 12, cw = 7, chH = 12, cols = 0, rows = 0;
+let mode = "ascii", pi = 0, debug = false;
+let landmarker = null, lastVideoTime = -1;
+let face = { seen: false, x: 0, y: 0, w: 200, roll: 0, nx: .5, ny: .5, lastSeen: 0 };
+const bs = {};                         // smoothed blendshapes
+let current = "none", candidate = "none", candCount = 0;
+let rowGlitch = [];
+
+/* ---------- setup ---------- */
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const targetCols = W < 600 ? 64 : W < 1000 ? 110 : 150;
+  fs = Math.max(8, Math.min(16, Math.round(W / (targetCols * 0.6))));
+  ctx.font = `500 ${fs}px "JetBrains Mono", monospace`;
+  cw = ctx.measureText("M").width; chH = fs;
+  cols = Math.ceil(W / cw); rows = Math.ceil(H / chH);
+  small.width = cols; small.height = rows;
+  rowGlitch = new Array(rows).fill(0);
+}
+addEventListener("resize", resize);
+addEventListener("orientationchange", () => setTimeout(resize, 200));
+if (window.visualViewport) visualViewport.addEventListener("resize", resize);
+document.fonts.ready.then(resize);
+resize();
+
+PALETTES.forEach((p, i) => {
+  const b = document.createElement("button");
+  b.style.background = p.bg; b.setAttribute("aria-label", `Palette ${i + 1}`);
+  b.onclick = () => setPalette(i);
+  $("swatches").appendChild(b);
+});
+function setPalette(i) {
+  pi = i;
+  [...$("swatches").children].forEach((b, j) => b.setAttribute("aria-pressed", j === i));
+  if (mode === "ascii") {
+    document.documentElement.style.setProperty("--ui", PALETTES[i].accent);
+    document.documentElement.style.setProperty("--bg", PALETTES[i].bg);
+    themeColor(PALETTES[i].bg);
+  }
+}
+function themeColor(c) { document.querySelector('meta[name="theme-color"]').content = c; }
+function setMode(m) {
+  mode = m;
+  document.body.classList.toggle("type", m === "type");
+  $("title").textContent = m === "ascii" ? "Glyph mirror" : "Type face";
+  $("modeBtn").textContent = m === "ascii" ? "Type face" : "Glyph mirror";
+  if (m === "ascii") setPalette(pi);
+  else { document.documentElement.style.removeProperty("--ui"); document.documentElement.style.removeProperty("--bg"); themeColor("#93b8fb"); }
+}
+$("modeBtn").onclick = () => setMode(mode === "ascii" ? "type" : "ascii");
+$("snapBtn").onclick = () => snapshot();
+$("debugBtn").onclick = () => toggleDebug();
+function toggleDebug() { debug = !debug; $("debugBtn").setAttribute("aria-pressed", debug); }
+
+/* phones: open the share sheet (save to Photos etc.); desktop: download */
+function snapshot() {
+  canvas.toBlob(async blob => {
+    const name = `mood-glyph-${current}.png`;
+    const file = new File([blob], name, { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ files: [file], title: "Mood Glyph" }); return; } catch (e) { if (e.name === "AbortError") return; }
+    }
+    const a = document.createElement("a");
+    a.download = name; a.href = URL.createObjectURL(blob); a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }, "image/png");
+}
+setPalette(0);
+
+addEventListener("keydown", e => {
+  if (e.key === "m" || e.key === "M") setMode(mode === "ascii" ? "type" : "ascii");
+  if (e.key >= "1" && e.key <= "4") setPalette(+e.key - 1);
+  if (e.key === "d" || e.key === "D") toggleDebug();
+  if (e.key === "s" || e.key === "S") {
+    snapshot();
+  }
+});
+
+/* load model right away so it's ready by the time the camera is */
+const modelReady = (async () => {
+  const fileset = await FilesetResolver.forVisionTasks(WASM);
+  const opts = d => ({
+    baseOptions: { modelAssetPath: MODEL, delegate: d },
+    runningMode: "VIDEO", numFaces: 1, outputFaceBlendshapes: true,
+  });
+  try { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("GPU")); }
+  catch { landmarker = await FaceLandmarker.createFromOptions(fileset, opts("CPU")); }
+})();
+
+const isPhone = matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) < 700;
+
+/* keep the screen awake while playing (where supported) */
+let wakeLock = null;
+async function keepAwake() { try { wakeLock = await navigator.wakeLock?.request("screen"); } catch {} }
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { keepAwake(); if (video.srcObject) video.play().catch(() => {}); }
+});
+
+$("go").onclick = async () => {
+  const err = $("err");
+  try {
+    $("go").textContent = "Starting…";
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: isPhone ? 640 : 1280 }, height: { ideal: isPhone ? 480 : 720 } }, audio: false,
+    });
+    video.srcObject = stream; await video.play();
+    $("go").textContent = "Loading face model…";
+    await modelReady;
+    $("start").remove();
+    keepAwake();
+  } catch (e) {
+    $("go").textContent = "Try again";
+    err.style.display = "block";
+    err.textContent = e && e.name === "NotAllowedError"
+      ? "Camera access was blocked. Allow the camera in your browser's address bar, then try again."
+      : `Couldn't start: ${e && e.message ? e.message : e}. The page needs https (or localhost) and an internet connection to load the face model.`;
+  }
+};
+
+/* ---------- tracking ---------- */
+function crop() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (vw / vh > W / H) { const sw = vh * W / H; return { sx: (vw - sw) / 2, sy: 0, sw, sh: vh, vw, vh }; }
+  const sh = vw * H / W; return { sx: 0, sy: (vh - sh) / 2, sw: vw, sh, vw, vh };
+}
+function toScreen(p, c) {
+  const x = (p.x * c.vw - c.sx) / c.sw * W, y = (p.y * c.vh - c.sy) / c.sh * H;
+  return { x: W - x, y };             // mirrored
+}
+const lerp = (a, b, t) => a + (b - a) * t;
+
+function handle(res, now) {
+  if (res.faceLandmarks && res.faceLandmarks.length) {
+    const L = res.faceLandmarks[0], c = crop();
+    const e1 = toScreen(L[33], c), e2 = toScreen(L[263], c), nose = toScreen(L[1], c);
+    const l = toScreen(L[234], c), r = toScreen(L[454], c);
+    const [a, b] = e1.x < e2.x ? [e1, e2] : [e2, e1];
+    const tx = (a.x + b.x) / 2 * .6 + nose.x * .4, ty = (a.y + b.y) / 2 * .6 + nose.y * .4;
+    const k = face.seen ? .35 : 1;
+    face.x = lerp(face.x, tx, k); face.y = lerp(face.y, ty, k);
+    face.w = lerp(face.w, Math.hypot(r.x - l.x, r.y - l.y), k);
+    face.roll = lerp(face.roll, Math.atan2(b.y - a.y, b.x - a.x), k);
+    face.nx = face.x / W; face.ny = face.y / H;
+    face.seen = true; face.lastSeen = now;
+    for (const cat of res.faceBlendshapes[0].categories)
+      bs[cat.categoryName] = lerp(bs[cat.categoryName] ?? 0, cat.score, .35);
+  } else if (now - face.lastSeen > 300) face.seen = false;
+}
+
+function vals() {
+  const g = n => bs[n] || 0;
+  let L = "Left", R = "Right"; if (SWAP_LR) [L, R] = [R, L];
+  return {
+    blinkL: g("eyeBlink" + L), blinkR: g("eyeBlink" + R),
+    blink: (g("eyeBlinkLeft") + g("eyeBlinkRight")) / 2,
+    wide: (g("eyeWideLeft") + g("eyeWideRight")) / 2,
+    smile: (g("mouthSmileLeft") + g("mouthSmileRight")) / 2,
+    frown: (g("mouthFrownLeft") + g("mouthFrownRight")) / 2,
+    browDownL: g("browDown" + L), browDownR: g("browDown" + R),
+    browDown: (g("browDownLeft") + g("browDownRight")) / 2,
+    browOutL: g("browOuterUp" + L), browOutR: g("browOuterUp" + R),
+    browUp: g("browInnerUp"), jaw: g("jawOpen"), pucker: g("mouthPucker"),
+  };
+}
+
+function classify(v) {
+  if (!face.seen) return "none";
+  if (Math.abs(v.blinkL - v.blinkR) > T.wink && Math.max(v.blinkL, v.blinkR) > .5) return "cheeky";
+  if (v.blink > T.blink) return "sleepy";
+  if (v.jaw > T.jaw && v.browUp > T.shockBrow) return "shocked";
+  if (v.jaw > T.jaw) return "surprised";
+  if (v.smile > T.smile) return "happy";
+  if (v.pucker > T.pucker) return "kissy";
+  if (v.browDown > T.browDown) return "angry";
+  if (v.frown > T.frown || (v.browUp > T.sadBrow && v.smile < .1)) return "sad";
+  return "neutral";
+}
+
+/* ---------- mode 1: ASCII mirror + kaomoji ---------- */
+function drawAscii() {
+  const p = PALETTES[pi];
+  ctx.fillStyle = p.bg; ctx.fillRect(0, 0, W, H);
+  if (!video.videoWidth) return;
+  const c = crop();
+  sctx.save(); sctx.setTransform(-1, 0, 0, 1, cols, 0);
+  sctx.drawImage(video, c.sx, c.sy, c.sw, c.sh, 0, 0, cols, rows);
+  sctx.restore();
+  const d = sctx.getImageData(0, 0, cols, rows).data;
+
+  for (let y = 0; y < rows; y++) {
+    rowGlitch[y] *= .85;
+    if (Math.random() < .004) rowGlitch[y] = (Math.random() - .5) * cw * 24;
+  }
+  const buckets = p.ink.map(() => []);
+  for (let y = 0; y < rows; y++) {
+    const off = rowGlitch[y];
+    for (let x = 0; x < cols; x++) {
+      const i = (y * cols + x) * 4;
+      let l = (.299 * d[i] + .587 * d[i + 1] + .114 * d[i + 2]) / 255;
+      l = Math.min(1, Math.max(0, (l - .5) * CONTRAST + .5));
+      if (l > .94) continue;
+      const ch = RAMP[Math.floor(l * (RAMP.length - 1))];
+      if (ch === " ") continue;
+      buckets[Math.min(p.ink.length - 1, Math.floor(l * p.ink.length))].push(ch, x * cw + off, y * chH);
+    }
+  }
+  ctx.font = `500 ${fs}px "JetBrains Mono", monospace`; ctx.textBaseline = "top"; ctx.textAlign = "left";
+  buckets.forEach((b, k) => {
+    ctx.fillStyle = p.ink[k];
+    for (let j = 0; j < b.length; j += 3) ctx.fillText(b[j], b[j + 1], b[j + 2]);
+  });
+
+  // kaomoji on the face
+  const e = EXPR[current];
+  const cx = face.seen ? face.x : W / 2, cy = face.seen ? face.y : H / 2;
+  const targetW = Math.min(W * .9, face.seen ? face.w * 1.7 : Math.min(W, H) * .55);
+  ctx.font = `700 100px Silkscreen, "JetBrains Mono", monospace`;
+  const size = 100 * targetW / ctx.measureText(e.face).width;
+  ctx.font = `700 ${size}px Silkscreen, "JetBrains Mono", monospace`;
+  const lw = Math.max(3, size * .07), gap = size * .25;
+  ctx.fillStyle = p.accent;
+  ctx.fillRect(0, cy - lw / 2, Math.max(0, cx - targetW / 2 - gap), lw);
+  ctx.fillRect(cx + targetW / 2 + gap, cy - lw / 2, W, lw);
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(face.seen ? face.roll : 0);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(e.face, 0, 0);
+  ctx.restore();
+}
+
+/* ---------- mode 2: typographic face ---------- */
+const NOISE = "¥§¶ØÆ£$%&#@*+=<>~^/\\|{}[]()¿¡«»±×÷ÐÞßøæœ0123456789";
+function centered(text, y = 0) {
+  const m = ctx.measureText(text);
+  ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  const x = -(m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2;
+  const yy = (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2;
+  return [x, y + yy];
+}
+
+function drawTypeFace(v, t) {
+  const bg = "#93b8fb", ink = "#000";
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  const s = Math.min(W / 1060, H / 1150);
+  const hx = face.seen ? (face.nx - .5) * W * .35 : 0, hy = face.seen ? (face.ny - .5) * H * .25 : 0;
+  ctx.save();
+  ctx.translate(W / 2 + hx, H / 2 + hy); ctx.rotate(face.seen ? face.roll : 0); ctx.scale(s, s);
+  ctx.fillStyle = ink; ctx.strokeStyle = ink; ctx.lineJoin = "round";
+
+  // crown of letters: a V that deepens when you scowl, flattens when brows go up
+  const letter = EXPR[current].word[0].toLowerCase();
+  const depth = 200 + v.browDown * 240 - v.browUp * 160;
+  ctx.textAlign = "center"; ctx.textBaseline = "alphabetic";
+  for (let i = -8; i <= 8; i++) {
+    const tt = i / 8, a = 1 - Math.abs(tt);
+    ctx.font = `500 ${26 + a * a * 72}px "Space Grotesk", sans-serif`;
+    ctx.fillText(letter, tt * 460, -470 + Math.pow(a, 1.6) * depth + Math.sin(t / 400 + i) * 4);
+  }
+
+  // brows: outlined crescents
+  for (const side of [-1, 1]) {
+    const down = side < 0 ? v.browDownL : v.browDownR, out = side < 0 ? v.browOutL : v.browOutR;
+    ctx.save();
+    ctx.translate(side * 205, -150 - (v.browUp * .6 + out * .4) * 110 + down * 40);
+    ctx.rotate(side * (v.browUp * .3 - down * .45));
+    ctx.beginPath();
+    ctx.moveTo(-160, 45); ctx.quadraticCurveTo(0, -80, 160, 45); ctx.quadraticCurveTo(0, -35, -160, 45);
+    ctx.closePath(); ctx.fillStyle = bg; ctx.fill(); ctx.lineWidth = 10; ctx.stroke();
+    ctx.restore();
+  }
+
+  // eyes: giant closing-quote marks that squash when you blink
+  ctx.font = `230px "Archivo Black", sans-serif`;
+  for (const side of [-1, 1]) {
+    const open = 1 - (side < 0 ? v.blinkL : v.blinkR);
+    ctx.save(); ctx.translate(side * 175, 30);
+    if (open < .25) {
+      ctx.fillRect(-60, -5, 120, 10);
+    } else {
+      ctx.scale(1 + v.wide * .2, Math.min(1.3, open * 1.05) * (1 + v.wide * .35));
+      const [x, y] = centered("\u201D");
+      ctx.fillStyle = bg; ctx.fillText("\u201D", x, y);
+      ctx.lineWidth = 8; ctx.strokeText("\u201D", x, y);
+    }
+    ctx.restore();
+  }
+
+  // nose
+  ctx.fillStyle = ink; ctx.font = `700 70px "Space Grotesk", sans-serif`;
+  let [nx, ny] = centered(".."); ctx.fillText("..", nx, 220 + ny);
+
+  // mouth: lips of '=' with glitchy glyph noise inside
+  const w = 440 * (1 + v.smile * .25 - v.pucker * .45);
+  const lift = v.smile * 120 - v.frown * 100;
+  const open = 12 + v.jaw * 240;
+  const N = Math.max(8, Math.floor(w / 22)), rowH = 24;
+  ctx.font = `500 26px "JetBrains Mono", monospace`; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (let k = 0; k <= N; k++) {
+    const u = -1 + 2 * k / N, x = u * w / 2, edge = 380 - lift * u * u, bulge = open / 2 * (1 - u * u);
+    const top = edge - bulge, bot = edge + bulge;
+    ctx.fillText("=", x, top);
+    for (let y = top + rowH; y < bot - rowH * .5; y += rowH)
+      ctx.fillText(NOISE[(Math.random() * NOISE.length) | 0], x, y);
+    ctx.fillText("=", x, Math.max(bot, top + 14));
+  }
+  ctx.restore();
+}
+
+/* ---------- debug bars ---------- */
+function drawDebug(v) {
+  const keys = ["smile", "frown", "jaw", "browUp", "browDown", "blink", "wide", "pucker"];
+  const x = 16, y0 = W < 640 ? 130 : H * .22;
+  ctx.font = `500 12px "JetBrains Mono", monospace`; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  keys.forEach((k, i) => {
+    const y = y0 + i * 20;
+    ctx.fillStyle = "rgba(0,0,0,.6)"; ctx.fillRect(x, y - 8, 200, 16);
+    ctx.fillStyle = "#fff"; ctx.fillRect(x + 70, y - 5, 120 * Math.min(1, v[k]), 10);
+    ctx.fillText(k, x + 6, y);
+  });
+}
+
+/* ---------- loop ---------- */
+let shownMood = "";
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    handle(landmarker.detectForVideo(video, now), now);
+  }
+  const v = vals();
+  const next = classify(v);
+  if (next === candidate) candCount++; else { candidate = next; candCount = 0; }
+  if (candidate !== current && candCount > 5) current = candidate;
+
+  if (mode === "ascii") drawAscii(); else drawTypeFace(v, now);
+  if (debug) drawDebug(v);
+
+  if (shownMood !== current) {
+    shownMood = current;
+    $("mood").textContent = EXPR[current].word;
+    $("dot").classList.toggle("on", current !== "none");
+    $("statusText").textContent = current !== "none" ? "Tracking" : "No face";
+  }
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
