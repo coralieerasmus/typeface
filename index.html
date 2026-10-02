@@ -913,7 +913,7 @@ function frame(now) {
     shownMood = current;
     $("mood").textContent = EXPR[current].word;
     $("dot").classList.toggle("on", current !== "none");
-    $("statusText").textContent = current !== "none" ? "Tracking" : "No face";
+    $("statusText").textContent = current !== "none" ? "Tracking" : "No fce";
   }
 }
 requestAnimationFrame(frame);
